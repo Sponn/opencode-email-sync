@@ -2,6 +2,10 @@
 
 ## Running the worker
 
+The rootless `install` command enables plugin-managed startup when unspecified;
+see [persistence](persistence.md). The following manual/systemd setup is useful
+when `worker.autoStart` is false or a separate OS service owns the worker.
+
 Run `opencode-email-sync start --config /absolute/path/config.json` in a persistent
 terminal or user service. The worker must run under the same OS user as OpenCode
 and read the same configuration/state directory. `init` creates its token and
@@ -26,6 +30,8 @@ RestartSec=5
 WantedBy=default.target
 ```
 
+Alternatively, configure `worker.envFile` in the mail JSON and let the worker
+read it directly; an EnvironmentFile directive is unnecessary in that case.
 The private environment file supplies the configured password variables. Keep
 its permissions user-only. Enable the service with `systemctl --user daemon-reload`
 and `systemctl --user enable --now opencode-email-sync`. Ensure OpenCode's own
@@ -64,8 +70,10 @@ the dispatch immediately before the plugin submits it.
 
 ## Troubleshooting
 
-- **CLI not found in OpenCode:** add Bun's global bin directory to the environment
-  of the OpenCode process/service, or invoke the built CLI with absolute paths.
+- **CLI not found:** for installer-managed setups, the launcher directory is
+  added to OpenCode shell PATH on plugin startup. Outside OpenCode, use the
+  absolute launcher path printed by installation. For manually linked packages,
+  add Bun's global bin directory to your shell/service PATH.
 - **Worker unavailable:** initialize/start it using the shared config. Mail
   failures do not block ordinary OpenCode shell commands.
 - **No notification for older answers:** installation establishes a historical

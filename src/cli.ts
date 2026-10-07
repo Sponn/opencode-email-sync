@@ -1,23 +1,39 @@
 #!/usr/bin/env bun
 import { join } from 'node:path'
-import { loadConfig, defaultConfigPath, resolveCredentials } from './core/config'
+import { loadConfig, defaultConfigPath } from './core/config'
+import { workerCredentials } from './worker/credentials'
 import { initializeState, readState, lockWorker } from './worker/files'
 import { startControlServer, WorkerClient } from './worker/server'
 import { Store } from './state/database'
 import { createSmtp } from './mail/smtp'
 import { startImap, sleep } from './mail/imap'
 import { ingestPending, flushDeliveries } from './worker/mail-loop'
+import { runSupervisor } from './worker/supervisor'
+import { install } from './worker/install'
 
-const help = `OpenCode email sync\n\nCommands:\n  init --config PATH\n  start --config PATH\n  status --config PATH\n  session on|off|status [--config PATH]\n  resolve --job ID --action retry|cancel [--config PATH]\n\nSession commands use the current OpenCode shell context. In the web UI and email:\n  !opencode-email-sync session on\n  !opencode-email-sync session off\n  !opencode-email-sync session status\n`
+const help = `OpenCode email sync\n\nCommands:\n  install [--config PATH] [--opencode-config PATH] [--state-directory PATH] [--bun PATH]\n  init --config PATH\n  start --config PATH\n  supervise --config PATH\n  status --config PATH\n  session on|off|status [--config PATH]\n  resolve --job ID --action retry|cancel [--config PATH]\n\nSession commands use the current OpenCode shell context. In the web UI and email:\n  !opencode-email-sync session on\n  !opencode-email-sync session off\n  !opencode-email-sync session status\n`
 export async function main(args = process.argv.slice(2)): Promise<void> {
   if (!args.length || args.includes('--help') || args[0] === 'help') { console.log(help); return }
   const option = (name: string) => { const index = args.indexOf(name); if (index < 0) return undefined; if (!args[index + 1] || args[index + 1].startsWith('--')) throw new Error(`Missing value for ${name}`); return args[index + 1] }
   const path = option('--config') || process.env.OPENCODE_EMAIL_CONFIG || defaultConfigPath()
+  if (args[0] === 'install') {
+    const result = install({ configPath: path, opencodeConfigPath: option('--opencode-config'), stateDirectory: option('--state-directory'), bunPath: option('--bun') })
+    console.log(`Installed email sync.\nMail settings: ${result.configPath}\nCredentials: ${result.envFile}\nOpenCode configuration: ${result.opencodeConfigPath}\nCLI: ${result.launcher}\nQuit and restart OpenCode to load the plugin.`)
+    return
+  }
   const config = loadConfig(path)
   const command = args[0]
+  if (command === 'supervise') {
+    const abort = new AbortController()
+    const stop = () => abort.abort()
+    process.on('SIGTERM', stop); process.on('SIGINT', stop)
+    try { await runSupervisor(path, abort.signal) }
+    finally { process.off('SIGTERM', stop); process.off('SIGINT', stop) }
+    return
+  }
   if (command === 'init') { initializeState(config.worker.stateDirectory); console.log(`Initialized email-sync state at ${config.worker.stateDirectory}`); return }
   if (command === 'start') {
-    const credentials = resolveCredentials(config, process.env)
+    const credentials = workerCredentials(config)
     const state = initializeState(config.worker.stateDirectory)
     const release = await lockWorker(config.worker.stateDirectory)
     const store = new Store(join(config.worker.stateDirectory, 'state.sqlite'), config.recipients)

@@ -17,8 +17,8 @@ export function initializeState(directory: string): { token: string; instanceId:
 export function readState(directory: string) {
   return { token: readFileSync(join(directory, 'token'), 'utf8').trim(), instanceId: readFileSync(join(directory, 'instance-id'), 'utf8').trim() }
 }
-export async function lockWorker(directory: string): Promise<() => Promise<void>> {
-  const path = join(directory, 'worker.lock')
+export async function lockWorker(directory: string, name = 'worker.lock'): Promise<() => Promise<void>> {
+  const path = join(directory, name)
   closeSync(openSync(path, 'a', 0o600)); chmodSync(path, 0o600)
   // The kernel owns exclusion and releases it automatically after a crash.
   // Never unlink the lock pathname: that would create independently lockable

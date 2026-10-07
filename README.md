@@ -17,6 +17,8 @@ reasoning, compaction output, and tool traces do not generate notifications.
 - Incoming instructions accepted only from the configured recipients.
 - Default-on sync, persistent per-session controls, and durable delivery/reply queues.
 - One worker per local installation; no OpenCode fork or browser extension needed.
+- Optional plugin-managed worker startup and crash recovery, including containers.
+- Rootless installer with private credential files and automatic CLI recovery.
 
 ## Requirements
 
@@ -34,47 +36,47 @@ git clone https://github.com/Sponn/opencode-email-sync.git
 cd opencode-email-sync
 bun install --frozen-lockfile
 bun run build
-bun link
+bun dist/cli.js install
 ```
 
 The package is installed from this repository; it is not published to npm.
-`bun link` places the CLI in Bun's global bin directory. Ensure that directory
-is on the `PATH` inherited by OpenCode, including an OpenCode service process.
+The installer registers the plugin in your global OpenCode JSON/JSONC config,
+preserves existing settings/comments, and prints the paths it created. It needs
+no root access and does not modify `/usr/local/bin` or your shell profile.
 
-1. Copy `examples/email-sync.json` to
-   `~/.config/opencode-email-sync/config.json` (or an explicit absolute path).
-   Set the mailbox address, server details, and your allowed recipient addresses.
-2. Provide the password **in the worker's environment**, then initialize and start:
+1. Edit the printed mail-settings file (normally
+   `~/.config/opencode-email-sync/config.json`): set your account, SMTP/IMAP servers,
+   and allowed recipient addresses.
+2. Edit the printed private credential file (normally
+   `~/.config/opencode-email-sync/worker.env`):
 
-   ```sh
-   export OPENCODE_MAIL_PASSWORD='your-mail-app-password'
-   opencode-email-sync init
-   opencode-email-sync start
+   ```dotenv
+   OPENCODE_MAIL_PASSWORD="your-mail-app-password"
    ```
 
-   For a custom configuration path, append `--config /absolute/path/config.json`
-   to each command. Keep the worker running; the password is resolved there,
-   not in each OpenCode process.
+3. **Quit and restart OpenCode.** When its first project loads the plugin, a
+   shared supervisor starts the worker. It waits for credentials when necessary
+   and restarts a crashed worker. Each OpenCode shell automatically receives the
+   user-owned CLI directory on PATH, so the session commands work immediately.
 
-3. Add the plugin to your global OpenCode config,
-   `~/.config/opencode/opencode.json`, merging with its existing fields:
+Configuration and state paths follow XDG variables when set. You can choose
+persistent paths explicitly:
 
-   ```json
-   {
-     "$schema": "https://opencode.ai/config.json",
-     "plugin": [
-       ["file:///absolute/path/to/opencode-email-sync/dist/index.js", {
-         "configPath": "/absolute/path/to/email-sync/config.json"
-       }]
-     ]
-   }
-   ```
+```sh
+bun dist/cli.js install \
+  --config /persistent/config/email-sync/config.json \
+  --opencode-config /persistent/config/opencode/opencode.jsonc \
+  --state-directory /persistent/state/email-sync
+```
 
-   The plugin can also be loaded as a string file URL when using the default
-   email-sync configuration path. Use an absolute file URL for the built entry.
+For container recreation, preserve the package, Bun runtime, configuration,
+credentials, and state at their configured paths. See
+[persistence and autostart](docs/persistence.md) for a complete checklist.
 
-4. **Quit and restart OpenCode** to load the plugin and changed configuration.
-   Its next completed answers will be emailed to each configured recipient.
+Autostart is opt-in for existing configurations (`worker.autoStart` defaults to
+false); the installer enables it when that setting is absent. Explicitly manual
+installations retain `false`. The [operations guide](docs/operations.md) also
+describes standalone/systemd worker startup.
 
 ## The same controls everywhere
 
@@ -125,12 +127,14 @@ See [configuration](docs/configuration.md) for TLS settings, credential variable
 mailbox polling, state paths, and optional receiving-server DMARC verification.
 See [operations](docs/operations.md) for service startup, status, restart recovery,
 and uncertain-job resolution.
+See [persistence](docs/persistence.md) for installation, worker supervision,
+rootless CLI paths, and container volume requirements.
 
 ## Development
 
 ```sh
 bun install --frozen-lockfile
-bunx playwright install chromium
+bunx playwright install --with-deps chromium
 bun test
 bun run typecheck
 bun run build

@@ -2,6 +2,7 @@ import type { PluginInput, Hooks } from '@opencode-ai/plugin'
 import type { Session } from '@opencode-ai/sdk'
 import { basename, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { delimiter } from 'node:path'
 import { loadConfig } from '../core/config'
 import { readState } from '../worker/files'
 import { WorkerClient } from '../worker/server'
@@ -128,6 +129,7 @@ export function createAdapter(input: PluginInput, configPath: string): Hooks {
     'shell.env': async ({ sessionID }, output) => {
       if (!sessionID) return
       output.env.OPENCODE_EMAIL_CONFIG = configPath
+      output.env.PATH = `${config.worker.binDirectory}${delimiter}${output.env.PATH || process.env.PATH || ''}`
       try {
         connect()
         Object.assign(output.env, shellContext(routeFor(sessionID), configPath))

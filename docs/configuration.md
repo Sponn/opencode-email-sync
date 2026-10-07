@@ -20,7 +20,10 @@ ambiguous threads are ignored. Display names and Reply-To never authorize mail.
 
 Each connection requires `host`, `port`, `username`, and `passwordEnv` (the name
 of a password environment variable). The worker resolves these environment
-variables at startup. They may differ for SMTP and IMAP.
+variables at startup. They may differ for SMTP and IMAP. Set `worker.envFile` to
+load a private dotenv file instead of putting mailbox credentials in OpenCode's
+environment. Nonempty process environment values override file values; empty or
+unset process values use the file. The file is parsed as data, not shell code.
 
 | Setting | Values/default |
 | --- | --- |
@@ -67,6 +70,22 @@ The control service binds only to `127.0.0.1`, authenticates its requests, and
 rejects browser-origin requests. The plugin and CLI use its token file. Changing
 the worker port or state path requires updating the shared configuration and
 restarting the worker and OpenCode processes.
+
+### Automatic startup options
+
+| Worker setting | Default / behavior |
+| --- | --- |
+| `autoStart` | `false`; start a shared supervisor when the plugin loads if enabled |
+| `envFile` | Optional dotenv file, read by worker processes on each startup |
+| `bunPath` | Optional Bun executable; the installer records its runtime path |
+| `binDirectory` | `bin` beside the mail config; rootless CLI launcher directory |
+| `restartDelayMs` | `10000`, minimum `100`; delay after worker exit or incomplete setup |
+
+Relative `envFile`, `bunPath`, and `binDirectory` values are resolved against the
+mail configuration file's directory. The installer records an absolute state
+directory so a different OpenCode startup environment does not move the queues.
+The supervisor, logs, credentials, and state remain separate from OpenCode's
+session context. See [persistence](persistence.md) for startup and upgrade details.
 
 ## Optional sender-authentication check
 
