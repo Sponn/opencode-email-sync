@@ -1,0 +1,14 @@
+{
+  "account": { "address": "opencode@example.com", "displayName": "OpenCode" },
+  "recipients": ["you@example.com"],
+  "smtp": {
+    "host": "smtp.example.com", "port": 465, "security": "tls",
+    "username": "opencode@example.com", "passwordEnv": "OPENCODE_MAIL_PASSWORD",
+    "verifyCertificate": true
+  },
+  "imap": {
+    "host": "imap.example.com", "port": 993, "security": "tls",
+    "username": "opencode@example.com", "passwordEnv": "OPENCODE_MAIL_PASSWORD",
+    "verifyCertificate": true, "mailbox": "INBOX"
+  }
+}

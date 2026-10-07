@@ -1,0 +1,8 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": [
+    ["file:///absolute/path/to/opencode-email-sync/dist/index.js", {
+      "configPath": "/absolute/path/to/email-sync/config.json"
+    }]
+  ]
+}

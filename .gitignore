@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.superpowers/
+.worktrees/
+*.sqlite*
+*.log
+.env
+coverage/
