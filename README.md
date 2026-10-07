@@ -141,4 +141,8 @@ local model, real OpenCode instances, and Chromium. They require `opencode`,
 `openssl`, and the Playwright Chromium installation. No personal mail credentials
 are used. Tests do not alter the active OpenCode configuration.
 
+An optional GitHub Actions template is provided at
+`docs/ci-workflow.yml.example`. Copy it to `.github/workflows/ci.yml` to activate
+CI when publishing with an account/token that permits workflow updates.
+
 MIT licensed.

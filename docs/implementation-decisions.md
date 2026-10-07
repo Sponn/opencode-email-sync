@@ -55,3 +55,10 @@ Provider-specific deliverability and receiving-server header sanitation cannot
 be established by local fixtures. They depend on the configured real mailbox;
 the repository documents the trust assumptions for optional DMARC checks.
 No review findings remain deferred.
+
+## Publication
+
+The authenticated GitHub token lacks the workflow scope. The user selected
+publication with CI as a documentation template, rather than granting another
+scope. `docs/ci-workflow.yml.example` can be activated later; all local verification
+commands and tests ship in the repository.
