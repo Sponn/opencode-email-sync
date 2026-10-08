@@ -19,6 +19,7 @@ reasoning, compaction output, and tool traces do not generate notifications.
 - One worker per local installation; no OpenCode fork or browser extension needed.
 - Optional plugin-managed worker startup and crash recovery, including containers.
 - Rootless installer with private credential files and automatic CLI recovery.
+- Permission-required emails with request-specific allow-once, reject, and always replies.
 
 ## Requirements
 
@@ -118,8 +119,49 @@ received it. For unusual quoting, end your authored text with a standalone line:
 --- end reply ---
 ```
 
-Attachments, interactive permission approvals, and question-tool selections are
-not supported. Ordinary conversational answers work as normal user prompts.
+Attachments and question-tool selections are not supported. Ordinary
+conversational answers work as normal user prompts. Permission requests are
+handled separately as described below.
+
+## Replying to permission requests
+
+When OpenCode pauses for permission in a synced session, the plugin sends a
+**Permission required** email immediately, without waiting for the final answer.
+The email includes the requested permission, affected command/path patterns,
+request details, and these exact reply options with explanations:
+
+```text
+!opencode-email-sync permission once
+!opencode-email-sync permission reject
+!opencode-email-sync permission always
+```
+
+- **once** approves only that request.
+- **reject** denies that request.
+- **always** uses OpenCode's own matching-action approval scope, shown in the email.
+
+Reply to the specific permission email with one command alone. Its email thread
+binds the decision to the exact request; the subject/session ID is not used to
+guess a pending permission. The allowlist and per-session sync policy apply.
+Permission decisions go directly to OpenCode's API, not to the coding agent or a
+shell. The worker confirms the outcome to the sender. Requests already answered
+in the UI or expired produce a stale-request response instead of another approval.
+
+Subagent permissions are reported under their root session's title and sync
+policy; the email also shows the actual target session ID. Decisions can unblock
+a prompt already waiting on a permission without becoming new user messages.
+
+OpenCode cannot run shell commands in the paused/busy session itself. To use
+shell mode, open another idle session in the **same project**, append the request
+ID printed in the email, and run for example:
+
+```text
+!opencode-email-sync permission once per_example_request_id
+```
+
+An explicit ID cannot target another project. Omitting the ID is accepted only
+when the current session has exactly one pending permission. See
+[permission handling](docs/permissions.md) for recovery and upgrade details.
 
 ## Configuration and operations
 

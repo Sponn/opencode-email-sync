@@ -3,11 +3,13 @@ import { chmodSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { routeKey, type Route, type Answer, type Delivery, type PromptJob, type Thread, type SessionRecord } from '../core/types'
+import { PermissionStore } from './permissions'
 
 const id = () => randomBytes(16).toString('hex')
 function messageId() { return `<email-sync-${id()}@opencode.local>` }
 export class Store {
   readonly db: Database
+  readonly permissions: PermissionStore
   constructor(path: string, readonly recipients: string[]) {
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
     this.db = new Database(path, { create: true })
@@ -23,6 +25,7 @@ export class Store {
       CREATE INDEX IF NOT EXISTS deliveries_status ON deliveries(status,nextAt);`)
     // A remote SMTP or prompt operation may have completed before the crash.
     this.db.exec("UPDATE deliveries SET status='uncertain' WHERE status='sending'; UPDATE prompts SET status='queued',owner=NULL WHERE status='leased'; UPDATE prompts SET status='reconcile', owner=NULL WHERE status='dispatching'")
+    this.permissions = new PermissionStore(this)
   }
   close() { this.db.close() }
   transaction<T>(fn: () => T): T { return this.db.transaction(fn)() }
@@ -36,6 +39,7 @@ export class Store {
       if (!enabled) {
         this.db.query("UPDATE deliveries SET status='canceled' WHERE routeKey=? AND control=0 AND status='queued'").run(routeKey(route))
         this.db.query("UPDATE prompts SET status='canceled',owner=NULL WHERE routeKey=? AND status IN ('queued','leased')").run(routeKey(route))
+        this.permissions.cancel(route)
       }
     })
   }
@@ -49,6 +53,7 @@ export class Store {
       this.db.query('UPDATE sessions SET deleted=1 WHERE key=?').run(routeKey(route))
       const jobs = this.db.query("SELECT * FROM prompts WHERE routeKey=? AND status NOT IN ('accepted','canceled','failed')").all(routeKey(route)) as any[]
       for (const job of jobs) this.failDeletedJob(job)
+      this.permissions.cancel(route, true)
       this.db.query("UPDATE deliveries SET status='canceled' WHERE routeKey=? AND control=0 AND status='queued'").run(routeKey(route))
     })
   }
@@ -69,14 +74,18 @@ export class Store {
       for (const recipient of this.recipients) this.addDelivery(answer, recipient, false)
     })
   }
-  addDelivery(answer: Omit<Answer, 'turnId'>, recipient: string, control: boolean, refs?: string) {
-    if (!refs && !control) refs = (this.db.query("SELECT messageId FROM deliveries WHERE routeKey=? AND recipient=? AND status='sent' ORDER BY rowid DESC LIMIT 1").get(routeKey(answer.route), recipient) as { messageId: string } | null)?.messageId
-    this.db.query('INSERT INTO deliveries(id,routeKey,route,recipient,text,project,title,messageId,refs,control) VALUES(?,?,?,?,?,?,?,?,?,?)').run(id(), routeKey(answer.route), JSON.stringify(answer.route), recipient, answer.text, answer.project, answer.title, messageId(), refs ?? null, Number(control))
+  addDelivery(answer: Omit<Answer, 'turnId'>, recipient: string, control: boolean, refs?: string, permissionKey?: string) {
+    if (!refs && !control && !permissionKey) refs = (this.db.query("SELECT messageId FROM deliveries WHERE routeKey=? AND recipient=? AND status='sent' AND permissionKey IS NULL ORDER BY rowid DESC LIMIT 1").get(routeKey(answer.route), recipient) as { messageId: string } | null)?.messageId
+    this.db.query('INSERT INTO deliveries(id,routeKey,route,recipient,text,project,title,messageId,refs,control,permissionKey) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(id(), routeKey(answer.route), JSON.stringify(answer.route), recipient, answer.text, answer.project, answer.title, messageId(), refs ?? null, Number(control), permissionKey ?? null)
   }
   deliveries(now = Date.now()): Delivery[] {
     return (this.db.query("SELECT * FROM deliveries WHERE status='queued' AND nextAt<=? ORDER BY rowid LIMIT 20").all(now) as any[]).map(row => ({ ...row, route: JSON.parse(row.route), control: !!row.control, references: row.refs || undefined }))
   }
   startDelivery(delivery: Delivery): boolean {
+    if (delivery.permissionKey && !delivery.control && (this.db.query('SELECT status FROM permissions WHERE key=?').get(delivery.permissionKey) as { status: string } | null)?.status !== 'pending') {
+      this.db.query("UPDATE deliveries SET status='canceled' WHERE id=? AND status='queued'").run(delivery.id)
+      return false
+    }
     if (!delivery.control && !this.policy(delivery.route)) {
       this.db.query("UPDATE deliveries SET status='canceled' WHERE id=? AND status='queued'").run(delivery.id)
       return false
@@ -90,8 +99,9 @@ export class Store {
     for (const ref of refs) {
       const row = this.db.query("SELECT * FROM deliveries WHERE messageId=? AND status IN ('sent','uncertain','sending')").get(ref) as any
       if (!row || (sender && row.recipient !== sender)) continue
-      const thread = { route: JSON.parse(row.route), recipient: row.recipient, project: row.project, title: row.title, messageId: row.messageId }
+      const thread = { route: JSON.parse(row.route), recipient: row.recipient, project: row.project, title: row.title, messageId: row.messageId, ...(row.permissionKey ? { permissionKey: row.permissionKey } : {}) }
       if (found && routeKey(found.route) !== routeKey(thread.route)) return null
+      if (found && found.permissionKey !== thread.permissionKey) return null
       found ??= thread
     }
     return found
@@ -129,14 +139,16 @@ export class Store {
     })
   }
   disconnect(owner: string) {
+    this.permissions.disconnect(owner)
     this.db.query("UPDATE prompts SET status='queued',owner=NULL WHERE owner=? AND status='leased'").run(owner)
     this.db.query("UPDATE prompts SET status='reconcile',owner=NULL WHERE owner=? AND status='dispatching'").run(owner)
   }
   meta(key: string): string | null { return (this.db.query('SELECT value FROM metadata WHERE key=?').get(key) as any)?.value ?? null }
   setMeta(key: string, value: string) { this.db.query('INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key, value) }
   resolve(key: string, action: 'retry' | 'cancel') {
+    this.permissions.resolve(key, action)
     this.db.query("UPDATE deliveries SET status=?,nextAt=0 WHERE id=? AND status='uncertain'").run(action === 'retry' ? 'queued' : 'canceled', key)
     this.db.query("UPDATE prompts SET status=? WHERE id=? AND status='uncertain'").run(action === 'retry' ? 'reconcile' : 'canceled', key)
   }
-  status() { return { deliveries: this.db.query('SELECT status,count(*) AS count FROM deliveries GROUP BY status').all(), prompts: this.db.query('SELECT status,count(*) AS count FROM prompts GROUP BY status').all(), uncertain: this.db.query("SELECT id,'delivery' AS kind FROM deliveries WHERE status='uncertain' UNION ALL SELECT id,'prompt' AS kind FROM prompts WHERE status='uncertain'").all() } }
+  status() { return { deliveries: this.db.query('SELECT status,count(*) AS count FROM deliveries GROUP BY status').all(), prompts: this.db.query('SELECT status,count(*) AS count FROM prompts GROUP BY status').all(), permissions: this.db.query('SELECT status,count(*) AS count FROM permission_jobs GROUP BY status').all(), uncertain: this.db.query("SELECT id,'delivery' AS kind FROM deliveries WHERE status='uncertain' UNION ALL SELECT id,'prompt' AS kind FROM prompts WHERE status='uncertain' UNION ALL SELECT id,'permission' AS kind FROM permission_jobs WHERE status='uncertain'").all() } }
 }

@@ -56,7 +56,39 @@ be established by local fixtures. They depend on the configured real mailbox;
 the repository documents the trust assumptions for optional DMARC checks.
 No review findings remain deferred.
 
-## Publication
+## v0.3.0 permission extension
+
+Permission requests now use a dedicated queue and recipient-scoped thread
+bindings, independent of ordinary prompt leases. Notification text includes
+allow-once/reject/always commands and explanations in both mail formats. A
+decision targets the original request ID and actual target session; subagent
+notifications use the root session's title and sync policy.
+
+The pinned v1 SDK lacks a pending-permission list method. Its generated HTTP
+methods accept request options, so the adapter overrides only the inventory URL
+and retains the existing authenticated/in-process transport. A characterization
+test and a password-protected real OpenCode test verify this behavior. Compatibility
+with other OpenCode versions must be tested rather than assumed.
+
+OpenCode 1.18.34 rejects shell calls inside busy sessions (HTTP 409). The same
+permission command works from an idle session in the same project with an explicit
+request ID; permission emails include this instruction. Email decisions themselves
+are not affected by the busy-shell limitation.
+
+The independent review found two recovery defects, both reproduced before fixing:
+uncertain decisions could lose their recovery flag after a second disconnect,
+and incomplete session lookups could falsely expire requests. Durable recovery
+state now survives repeated disconnects/restarts, and incomplete inventories are
+discarded rather than interpreted as empty. Held permission jobs also appear in
+status/resolution interfaces. A base-v0.2-schema migration test verifies existing
+policies, baselines, thread mappings, and prompts remain intact.
+
+Final permission checks: 75 tests, 353 assertions, typecheck/build, and a
+built-package real paused-session test with 17 assertions. That test exercises
+once, reject, always, a subsequent matching action, stale replies, cross-session
+shell controls, and child-to-root permission routing.
+
+## Initial publication
 
 The authenticated GitHub token lacks the workflow scope. The user selected
 publication with CI as a documentation template, rather than granting another

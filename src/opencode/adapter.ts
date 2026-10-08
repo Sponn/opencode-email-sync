@@ -8,7 +8,10 @@ import { readState } from '../worker/files'
 import { WorkerClient } from '../worker/server'
 import { completedAnswers, shellContext, type MessageRecord } from './answers'
 import { dispatch, SessionDeletedError, type HistoryMessage } from './dispatch'
-import type { Route, PromptJob } from '../core/types'
+import type { Route, PromptJob, PermissionJob } from '../core/types'
+import { permissionGateway } from './permission-api'
+import { dispatchPermission } from './permissions'
+import { rootPermissions } from './permission-inventory'
 
 export function createAdapter(input: PluginInput, configPath: string): Hooks {
   const config = loadConfig(configPath)
@@ -21,6 +24,9 @@ export function createAdapter(input: PluginInput, configPath: string): Hooks {
   const routes = new Map<string, Route>()
   const registered = new Set<string>()
   const inflight = new Set<string>()
+  const permissionInflight = new Set<string>()
+  const permissions = permissionGateway(input)
+  let checkingPermissions = false
   const project = (input.project as { name?: string }).name || basename(input.worktree) || basename(input.directory)
   const routeFor = (sessionId: string): Route => ({ instanceId: instanceId!, projectId: input.project.id, directory: resolve(input.directory), sessionId })
   let warned = false
@@ -111,10 +117,43 @@ export function createAdapter(input: PluginInput, configPath: string): Hooks {
     } catch { await client.request('ack', { adapterId, id: job.id, status: 'uncertain' }).catch(() => {}) }
     finally { inflight.delete(job.route.sessionId) }
   }
+  async function syncPermissions() {
+    if (stopped || checkingPermissions || !worker) return
+    checkingPermissions = true
+    const client = worker
+    try {
+      const pending = await permissions.list()
+      const grouped = await rootPermissions(pending, input.directory, async id => {
+        const result = await input.client.session.get({ path: { id } })
+        if (result.error || !result.data) throw new Error('Permission target session lookup unavailable')
+        return result.data
+      })
+      for (const group of grouped.values()) if (!registered.has(group.session.id)) await syncSession(group.session)
+      for (const [sessionId, route] of routes) {
+        if (!registered.has(sessionId)) continue
+        await client.request('permissions-sync', { adapterId, route, requests: grouped.get(sessionId)?.requests || [] })
+      }
+    } catch { /* Failed reads must not falsely expire permissions; retry next poll. */ }
+    finally { checkingPermissions = false }
+  }
+  async function executePermission(job: PermissionJob) {
+    if (stopped || permissionInflight.has(job.id) || !worker) return
+    permissionInflight.add(job.id)
+    const client = worker
+    try {
+      const outcome = await dispatchPermission(permissions, job, async () => (await client.request<{ allowed: boolean }>('permission-begin', { adapterId, id: job.id })).allowed)
+      await client.request('permission-ack', { adapterId, id: job.id, outcome })
+    } catch { await client.request('permission-ack', { adapterId, id: job.id, outcome: 'uncertain' }).catch(() => {}) }
+    finally { permissionInflight.delete(job.id) }
+  }
   async function poll() {
     if (stopped || polling || !worker) return
     polling = true
     try {
+      await syncPermissions()
+      // Permission jobs are independent of prompt leases and session busy status.
+      const decisions = await worker.request<PermissionJob[]>('permission-poll', { adapterId })
+      for (const job of decisions) void executePermission(job)
       const jobs = await worker.request<PromptJob[]>('poll', { adapterId })
       for (const job of jobs) void execute(job)
     } catch { registered.clear(); worker = undefined }
@@ -144,6 +183,7 @@ export function createAdapter(input: PluginInput, configPath: string): Hooks {
         if (route) await worker?.request('deleted', { route }).catch(() => {})
         return
       }
+      if (['permission.asked', 'permission.updated', 'permission.replied'].includes(event.type)) void syncPermissions()
       if (['session.created', 'session.updated', 'session.idle'].includes(event.type)) void scan()
     },
     dispose: async () => {

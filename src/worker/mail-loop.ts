@@ -6,6 +6,7 @@ import type { Store } from '../state/database'
 import { authorize, extractReply, parseIncoming } from '../mail/parse'
 import { renderMail } from '../mail/render'
 import type { MailSender } from '../mail/smtp'
+import { permissionUsage } from '../mail/permission'
 
 export async function ingestPending(store: Store, config: Config): Promise<void> {
   for (const incoming of store.pendingMail()) {
@@ -17,15 +18,22 @@ export async function ingestPending(store: Store, config: Config): Promise<void>
     if (!authorize(mail, config, thread) || !thread) { store.processedMail(incoming.id); continue }
     const reply = extractReply(mail)
     store.transaction(() => {
-      const confirm = (text: string) => store.addDelivery({ route: thread.route, project: thread.project, title: thread.title, text }, sender, true, mail.messageId)
+      const confirm = (text: string) => store.addDelivery({ route: thread.route, project: thread.project, title: thread.title, text }, sender, true, mail.messageId, thread.permissionKey)
       if (reply.kind === 'ambiguous') confirm('Please put your reply above a standalone --- end reply --- delimiter so quoted history is not sent as instructions.')
       if (reply.kind === 'text') {
         const command = parseCommand(reply.text)
-        if (command.kind === 'invalid') confirm('Use one standalone command: !opencode-email-sync session on, off, or status.')
+        if (command.kind === 'invalid') confirm(`Use one standalone command. Session controls: !opencode-email-sync session on, off, or status.\n${permissionUsage}`)
         else if (command.kind === 'command') {
           if (command.action !== 'status') store.setPolicy(thread.route, command.action === 'on')
           confirm(`Email sync is ${store.policy(thread.route) ? 'ON' : 'OFF'} for ${thread.route.sessionId}`)
-        } else if (store.session(thread.route)?.deleted) confirm('This OpenCode session was deleted; your reply was not submitted.')
+        } else if (command.kind === 'permission') {
+          if (!thread.permissionKey) confirm(`Reply to the permission email to identify the exact request.\n${permissionUsage}`)
+          else {
+            const decision = store.permissions.decide(thread.route, command.action, { key: thread.permissionKey, requestId: command.requestId, sender, replyId: mail.messageId })
+            if (!decision.ok) confirm(decision.message)
+          }
+        } else if (thread.permissionKey) confirm(`This is a permission-request thread; reply with one of the available commands.\n${permissionUsage}`)
+        else if (store.session(thread.route)?.deleted) confirm('This OpenCode session was deleted; your reply was not submitted.')
         else if (store.policy(thread.route)) store.enqueue(thread.route, incoming.id, command.text, sender)
       }
       store.processedMail(incoming.id)

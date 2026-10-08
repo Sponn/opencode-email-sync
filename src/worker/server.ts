@@ -2,6 +2,7 @@ import { z } from 'zod'
 import type { Store } from '../state/database'
 import type { Route, Answer } from '../core/types'
 import { routeKey } from '../core/types'
+import { permissionRequestSchema } from '../opencode/permission-api'
 
 const routeSchema = z.object({ instanceId: z.string().min(1), projectId: z.string().min(1), directory: z.string().min(1), sessionId: z.string().regex(/^ses_[\w-]+$/) })
 const sessionSchema = z.object({ route: routeSchema, project: z.string(), title: z.string(), completed: z.array(z.string()) })
@@ -57,6 +58,31 @@ export function startControlServer(store: Store, token: string, port: number) {
           return Response.json(adapter.routes.map(route => store.claim(route, adapterId)).filter(Boolean))
         }
         if (action === 'answer') { const answer: Answer = answerSchema.parse(data); store.answer(answer); return Response.json({ ok: true }) }
+        if (action === 'permissions-sync') {
+          const { adapterId, route, requests } = z.object({ adapterId: ownerSchema, route: routeSchema, requests: z.array(permissionRequestSchema) }).parse(data)
+          const adapter = adapters.get(adapterId)
+          if (!adapter?.routes.some(owned => routeKey(owned) === routeKey(route))) return Response.json({ error: 'Permission route is not registered to this adapter' }, { status: 409 })
+          store.permissions.sync(route, requests, adapterId, new Set(adapters.keys()))
+          return Response.json({ ok: true })
+        }
+        if (action === 'permission-command') {
+          const { route, action, requestId } = z.object({ route: routeSchema, action: z.enum(['once', 'reject', 'always']), requestId: z.string().regex(/^per_[\w-]+$/).optional() }).parse(data)
+          return Response.json(store.permissions.decide(store.permissions.shellRoute(route, requestId), action, { requestId }))
+        }
+        if (action === 'permission-result') { const { id } = z.object({ id: z.string() }).parse(data); return Response.json(store.permissions.status(id)) }
+        if (action === 'permission-poll') {
+          const { adapterId } = z.object({ adapterId: ownerSchema }).parse(data)
+          const adapter = adapters.get(adapterId)
+          if (!adapter) return Response.json({ error: 'Adapter must register' }, { status: 409 })
+          adapter.at = Date.now()
+          return Response.json(adapter.routes.map(route => store.permissions.claim(route, adapterId)).filter(Boolean))
+        }
+        if (action === 'permission-begin') { const { adapterId, id } = z.object({ adapterId: ownerSchema, id: z.string() }).parse(data); return Response.json({ allowed: store.permissions.begin(id, adapterId) }) }
+        if (action === 'permission-ack') {
+          const input = z.object({ adapterId: ownerSchema, id: z.string(), outcome: z.enum(['accepted', 'stale', 'queued', 'uncertain', 'canceled']) }).parse(data)
+          store.permissions.ack(input.id, input.adapterId, input.outcome)
+          return Response.json({ ok: true })
+        }
         if (action === 'baseline') { const { route, completed } = sessionSchema.pick({ route: true, completed: true }).parse(data); store.baseline(route, completed); return Response.json({ ok: true }) }
         if (action === 'command') {
           const { route, action } = z.object({ route: routeSchema, action: z.enum(['on', 'off', 'status']) }).parse(data)

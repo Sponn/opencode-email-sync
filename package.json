@@ -1,6 +1,6 @@
 {
   "name": "opencode-email-sync",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "description": "Two-way email participation in OpenCode sessions",
   "license": "MIT",
@@ -8,7 +8,7 @@
   "engines": { "bun": ">=1.4.2" },
   "exports": { ".": "./dist/index.js" },
   "bin": { "opencode-email-sync": "./dist/cli.js" },
-  "files": ["dist", "examples", "README.md", "LICENSE", "docs/configuration.md", "docs/operations.md", "docs/persistence.md"],
+  "files": ["dist", "examples", "README.md", "LICENSE", "docs/configuration.md", "docs/operations.md", "docs/persistence.md", "docs/permissions.md"],
   "scripts": {
     "test": "bun test",
     "typecheck": "tsc --noEmit",
